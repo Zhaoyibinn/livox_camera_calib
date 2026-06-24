@@ -1,17 +1,14 @@
-# Data path. adjust them!
-common:
-    image_path:  "/home/ycj/data/calib/image/old"
-    pcd_path:  "/home/ycj/data/calib/pcd/old"
-    result_path:  "/home/ycj/data/calib/extrinsic.txt"
+lidar_camera_multi_calib:
+  ros__parameters:
+    image_path: "/home/pyh/zyb/slam/catkin_ws/rosbag2_2026_06_24-10_32_45_calib/image"
+    pcd_path: "/home/pyh/zyb/slam/catkin_ws/rosbag2_2026_06_24-10_32_45_calib/lidar"
+    result_path: "/home/pyh/zyb/slam/catkin_ws/rosbag2_2026_06_24-10_32_45_calib/extrinsic.txt"
     data_num: 3
-# Camera Parameters. Adjust them!
-camera:
-    camera_matrix: [1704.1857 , 0.0,      886.5115,
-                    0.0,     1719.5228,  467.9244,
-                    0.0,     0.0,      1.0     ]
-    dist_coeffs: [-0.0963, 0.0708, 0.0011, -0.0017, 0.000000]
-
-# Calibration Parameters.!
-calib:
-    calib_config_file: "/home/ycj/catkin_ws/src/livox_camera_calib/config/config_outdoor.yaml"
-    use_rough_calib: true # set true if your initial_extrinsic is bad
+    start_index: 1
+    image_extension: ".png"
+    camera_matrix: [919.8876953125, 0.0, 646.6534423828125,
+                    0.0, 919.4791259765625, 373.4688415527344,
+                    0.0, 0.0, 1.0]
+    dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0]
+    calib_config_file: "/home/pyh/zyb/slam/catkin_ws/src/depd/livox_camera_calib/config/config_outdoor.yaml"
+    use_rough_calib: true

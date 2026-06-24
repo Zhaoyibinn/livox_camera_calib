@@ -22,6 +22,9 @@ double height;
 // Calib config
 bool use_rough_calib;
 string calib_config_file;
+// Save image
+bool save_img;
+std::string folder;
 // instrins matrix
 Eigen::Matrix3d inner;
 // Distortion coefficient
@@ -180,6 +183,7 @@ void roughCalib(Calibration &calibra, Vector6d &calib_params,
                             calibra.rgb_egde_cloud_, calibra.plane_line_cloud_,
                             pnp_list);
           cv::Mat projection_img = calibra.getProjectionImg(calib_params);
+          cv::namedWindow("Rough Optimization", cv::WINDOW_NORMAL);
           cv::imshow("Rough Optimization", projection_img);
           cv::waitKey(50);
         }
@@ -189,21 +193,49 @@ void roughCalib(Calibration &calibra, Vector6d &calib_params,
 }
 
 int main(int argc, char **argv) {
-  ros::init(argc, argv, "lidarCamCalib");
-  ros::NodeHandle nh;
-  ros::Rate loop_rate(0.1);
+  rclcpp::init(argc, argv);
+  rclcpp::NodeOptions options;
+  Calibration calibra(options);
 
-  nh.param<string>("common/image_file", image_file, "");
-  nh.param<string>("common/pcd_file", pcd_file, "");
-  nh.param<string>("common/result_file", result_file, "");
-  std::cout << "pcd_file path:" << pcd_file << std::endl;
-  nh.param<vector<double>>("camera/camera_matrix", camera_matrix,
-                           vector<double>());
-  nh.param<vector<double>>("camera/dist_coeffs", dist_coeffs, vector<double>());
-  nh.param<bool>("calib/use_rough_calib", use_rough_calib, false);
-  nh.param<string>("calib/calib_config_file", calib_config_file, "");
+  // TODO: Load params via camera and lidar structs
+  // Declare parameters
+  calibra.declare_parameter("image_file", "");
+  calibra.declare_parameter("pcd_file", "");
+  calibra.declare_parameter("result_file", "");
+  calibra.declare_parameter("camera_matrix", std::vector<double>());
+  calibra.declare_parameter("dist_coeffs", std::vector<double>());
+  calibra.declare_parameter("use_rough_calib", false);
+  calibra.declare_parameter("calib_config_file", "");
+  calibra.declare_parameter("save_img", false);
+  calibra.declare_parameter("folder", "");
 
-  Calibration calibra(image_file, pcd_file, calib_config_file);
+  // read parameters
+  calibra.get_parameter("image_file", image_file);
+  calibra.get_parameter("pcd_file", pcd_file);
+  calibra.get_parameter("result_file", result_file);
+  calibra.get_parameter("camera_matrix", camera_matrix);
+  calibra.get_parameter("dist_coeffs", dist_coeffs);
+  calibra.get_parameter("use_rough_calib", use_rough_calib);
+  calibra.get_parameter("calib_config_file", calib_config_file);
+  calibra.get_parameter("save_img", save_img);
+  calibra.get_parameter("folder", folder);
+
+  if (image_file.empty() || pcd_file.empty() || result_file.empty() ||
+      calib_config_file.empty()) {
+    RCLCPP_ERROR(calibra.get_logger(),
+                 "image_file, pcd_file, result_file and calib_config_file must be set");
+    rclcpp::shutdown();
+    return 1;
+  }
+  if (camera_matrix.size() != 9 || dist_coeffs.size() < 5) {
+    RCLCPP_ERROR(calibra.get_logger(),
+                 "camera_matrix must contain 9 values and dist_coeffs at least 5 values");
+    rclcpp::shutdown();
+    return 1;
+  }
+
+  calibra.initializeCalib(image_file, pcd_file, calib_config_file);
+  // Load this in a function?
   calibra.fx_ = camera_matrix[0];
   calibra.cx_ = camera_matrix[2];
   calibra.fy_ = camera_matrix[4];
@@ -223,8 +255,9 @@ int main(int argc, char **argv) {
 
   std::vector<PnPData> pnp_list;
   std::vector<VPnPData> vpnp_list;
+  RCLCPP_INFO(calibra.get_logger(), "Finish prepare!");
 
-  ROS_INFO_STREAM("Finish prepare!");
+  // Load this in a function?
   Eigen::Matrix3d R;
   Eigen::Vector3d T;
   inner << calibra.fx_, 0.0, calibra.cx_, 0.0, calibra.fy_, calibra.cy_, 0.0,
@@ -244,32 +277,41 @@ int main(int argc, char **argv) {
   calib_params[3] = T[0];
   calib_params[4] = T[1];
   calib_params[5] = T[2];
-  sensor_msgs::PointCloud2 pub_cloud;
+
+  // TODO: Viz this stuff in a function
+  // TODO: Add param to viz and save to file
+  sensor_msgs::msg::PointCloud2 pub_cloud;
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr rgb_cloud(
       new pcl::PointCloud<pcl::PointXYZRGB>);
   calibra.colorCloud(calib_params, 5, calibra.image_, calibra.raw_lidar_cloud_,
                      rgb_cloud);
   pcl::toROSMsg(*rgb_cloud, pub_cloud);
-  pub_cloud.header.frame_id = "livox";
-  calibra.init_rgb_cloud_pub_.publish(pub_cloud);
+  pub_cloud.header.frame_id = "lidar_link";
+  calibra.init_rgb_cloud_pub_->publish(pub_cloud);
   cv::Mat init_img = calibra.getProjectionImg(calib_params);
+  cv::namedWindow("Initial Extrinsic", cv::WINDOW_NORMAL);
   cv::imshow("Initial extrinsic", init_img);
-  cv::imwrite("/home/ycj/data/calib/init.png", init_img);
+  if (save_img){
+    cv::imwrite(folder+"/init.png", init_img);
+  }
   cv::waitKey(1000);
 
   if (use_rough_calib) {
     roughCalib(calibra, calib_params, DEG2RAD(0.1), 50);
   }
   cv::Mat test_img = calibra.getProjectionImg(calib_params);
+  cv::namedWindow("After rough extrinsic", cv::WINDOW_NORMAL);
   cv::imshow("After rough extrinsic", test_img);
   cv::waitKey(1000);
   int iter = 0;
+  // TODO: Explore if rough calib can be exposed as params for user
   // Maximum match distance threshold: 15 pixels
   // If initial extrinsic lead to error over 15 pixels, the algorithm will not
   // work
   int dis_threshold = 30;
   bool opt_flag = true;
 
+  // TODO: make optimization a function and
   // Iteratively reducve the matching distance threshold
   for (dis_threshold = 30; dis_threshold > 10; dis_threshold -= 1) {
     // For each distance, do twice optimization
@@ -287,6 +329,7 @@ int main(int argc, char **argv) {
                 << " pnp size:" << vpnp_list.size() << std::endl;
 
       cv::Mat projection_img = calibra.getProjectionImg(calib_params);
+      cv::namedWindow("Optimization", cv::WINDOW_NORMAL);
       cv::imshow("Optimization", projection_img);
       cv::waitKey(100);
       Eigen::Vector3d euler_angle(calib_params[0], calib_params[1],
@@ -367,7 +410,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  ros::Rate loop(0.5);
+  rclcpp::Rate loop(0.5);
   // roughCalib(calibra, calib_params, DEG2RAD(0.01), 20);
 
   R = Eigen::AngleAxisd(calib_params[0], Eigen::Vector3d::UnitZ()) *
@@ -380,8 +423,11 @@ int main(int argc, char **argv) {
   }
   outfile << 0 << "," << 0 << "," << 0 << "," << 1 << std::endl;
   cv::Mat opt_img = calibra.getProjectionImg(calib_params);
+  cv::namedWindow("Optimization result", cv::WINDOW_NORMAL);
   cv::imshow("Optimization result", opt_img);
-  cv::imwrite("/home/ycj/data/calib/opt.png", opt_img);
+  if (save_img) {
+    cv::imwrite(folder+"/result.png", opt_img);
+  }
   cv::waitKey(1000);
   Eigen::Matrix3d init_rotation;
   init_rotation << 0, -1.0, 0, 0, 0, -1.0, 1, 0, 0;
@@ -392,22 +438,28 @@ int main(int argc, char **argv) {
   // ","
   //         << RAD2DEG(adjust_euler[2]) << "," << 0 << "," << 0 << "," << 0
   //         << std::endl;
-  while (ros::ok()) {
-    sensor_msgs::PointCloud2 pub_cloud;
+  // TODO: Make this a viz function
+  // TODO: Change new to make_shared
+  // TODO: Add debug flag to turn on/off debug prints
+  while (rclcpp::ok()) {
+    sensor_msgs::msg::PointCloud2 pub_cloud;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr rgb_cloud(
         new pcl::PointCloud<pcl::PointXYZRGB>);
     calibra.colorCloud(calib_params, 5, calibra.image_,
                        calibra.raw_lidar_cloud_, rgb_cloud);
     pcl::toROSMsg(*rgb_cloud, pub_cloud);
-    pub_cloud.header.frame_id = "livox";
-    calibra.rgb_cloud_pub_.publish(pub_cloud);
-    sensor_msgs::ImagePtr img_msg =
-        cv_bridge::CvImage(std_msgs::Header(), "bgr8", calibra.image_)
-            .toImageMsg();
-    calibra.image_pub_.publish(img_msg);
+    pub_cloud.header.frame_id = "lidar_link";
+    calibra.rgb_cloud_pub_->publish(pub_cloud);
+    sensor_msgs::msg::Image img_msg =
+        *cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", opt_img).toImageMsg();
+      // sensor_msgs::msg::Image::SharedPtr img_msg =
+      // cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", calibra.image_)
+      //     .toImageMsg();
+    calibra.image_pub_->publish(img_msg);
     std::cout << "push enter to publish again" << std::endl;
     getchar();
     /* code */
   }
+  rclcpp::shutdown();
   return 0;
 }
